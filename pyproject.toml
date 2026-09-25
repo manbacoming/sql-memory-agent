@@ -1,0 +1,9 @@
+[project]
+name = "sql-memory-agent"
+version = "0.1.0"
+description = "SQL Agent research project for reinforcement learning over cross-task long-term memory."
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

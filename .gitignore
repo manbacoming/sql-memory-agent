@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local environments
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Large artifacts: keep these outside Git under /root/autodl-tmp
+/data/
+/models/
+/outputs/
+/checkpoints/
+*.db
+*.sqlite
+*.sqlite3
+*.jsonl.gz
+*.parquet
+*.pt
+*.pth
+*.safetensors
+*.ckpt
+
+# Secrets
+*.pem
+*id_rsa*
+*id_ed25519*
+*token*
+*secret*
