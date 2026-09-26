@@ -165,3 +165,21 @@ Recommendation:
 Rationale:
 
 - The project is new; the main risk is invalid experimental design, not lack of training time.
+﻿
+## 8. Data Size Feasibility Update
+
+Status on 2026-09-26: partially investigated; not fully solved because no full archive was downloaded or extracted.
+
+Known facts:
+
+- Official BIRD `train.zip` was checked with HTTP HEAD only: 8,919,543,554 bytes.
+- Official BIRD `dev.zip` was checked with HTTP HEAD only: 346,207,293 bytes.
+- The official BIRD site reports 33.4 GB total database size across 95 databases.
+- `bird23-train-filtered` provides a 6,601-example filtered train metadata split, but it does not remove the need for train SQLite databases.
+
+Decision for now:
+
+- The first real-data step should use official `dev.zip` for loader/evaluator validation.
+- Full train should wait until a fresh disk check and explicit approval, because compressed plus extracted data may fit in 50 GB but leaves little margin for models or generated outputs.
+
+See `docs/DATA_FEASIBILITY.md` for detailed sources, byte counts, and proposed download sequence.

@@ -228,3 +228,22 @@ df -h / /root/autodl-tmp
 ```
 
 Do not put datasets, models, outputs, or checkpoints on the system disk.
+﻿
+## 10. 2026-09-26 Data Feasibility Update
+
+The first item in the next work order has been investigated without downloading data. See `docs/DATA_FEASIBILITY.md`.
+
+Summary:
+
+- Official BIRD `train.zip` HEAD size: 8,919,543,554 bytes, about 8.92 GB decimal / 8.31 GiB.
+- Official BIRD `dev.zip` HEAD size: 346,207,293 bytes, about 0.35 GB decimal / 0.32 GiB.
+- The official BIRD site reports 95 databases and 33.4 GB total database size.
+- The BIRD Team `bird23-train-filtered` Hugging Face dataset keeps 6,601 of 9,428 train examples and is small as metadata, but still requires the BIRD train databases for execution.
+
+Recommended next action:
+
+1. Start with official `dev.zip` only, after explicit approval, to validate real SQLite loading and anti-leakage boundaries.
+2. Use `bird23-train-filtered` metadata for the first training-stream design.
+3. Download full `train.zip` only after a fresh disk check and a plan to remove the archive after extraction, or after attaching a larger data disk.
+
+No BIRD archive, model, or GPU job was downloaded or started during this update.
