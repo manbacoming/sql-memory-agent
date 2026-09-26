@@ -107,7 +107,8 @@ def sqlite_schema_summary(sqlite_path: str | Path, *, max_tables: int = 80) -> s
             ).fetchmany(max_tables)
             parts: list[str] = []
             for (table_name,) in table_rows:
-                columns = [row[1] for row in con.execute(f"PRAGMA table_info({table_name})").fetchall()]
+                quoted = '"' + str(table_name).replace('"', '""') + '"'
+                columns = [row[1] for row in con.execute(f"PRAGMA table_info({quoted})").fetchall()]
                 parts.append(f"{table_name}({', '.join(columns)})")
             return "; ".join(parts)
     except sqlite3.Error as exc:

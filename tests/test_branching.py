@@ -29,7 +29,7 @@ class BranchingTests(unittest.TestCase):
             task_id="t",
             db_version_id="retail_v1",
             question="Which city has the highest net sales after refunds?",
-            schema_text="orders(order_amount), cities(city_name), refunds(refund_amount)",
+            schema_text="orders(order_amount); cities(city_name); refunds(refund_amount)",
         )
         result = select_memories_for_task(context=context, store=store)
         self.assertEqual(result.selected_memory_ids, [])
@@ -42,7 +42,7 @@ class BranchingTests(unittest.TestCase):
             task_id="t",
             db_version_id="retail_v1",
             question="Which city has the highest net sales after refunds?",
-            schema_text="orders(order_amount), stores, cities, refunds(refund_amount)",
+            schema_text="orders(order_amount); stores(store_id); cities(city_name); refunds(refund_amount)",
         )
         result = select_memories_for_task(context=context, store=store)
         self.assertGreaterEqual(len(result.candidates), 2)
@@ -58,10 +58,45 @@ class BranchingTests(unittest.TestCase):
             task_id="t",
             db_version_id="retail_v1",
             question="Which city has the highest net sales after refunds?",
-            schema_text="orders(order_amount), stores, cities, refunds(refund_amount)",
+            schema_text="orders(order_amount); stores(store_id); cities(city_name); refunds(refund_amount)",
         )
         result = select_memories_for_task(context=context, store=store)
         self.assertEqual(result.selected_memory_ids, ["active"])
+
+
+    def test_time_and_filter_question_gets_specific_branches(self) -> None:
+        branches = generate_semantic_branches(
+            question="Please list the phone numbers of direct charter-funded schools opened after 2000/1/1.",
+            schema_text="schools(Phone, FundingType, OpenDate, Charter, School)",
+        )
+        ids = {branch.branch_id for branch in branches}
+        self.assertIn("requested_output", ids)
+        self.assertIn("filter_conditions", ids)
+        self.assertIn("time_conditions", ids)
+
+    def test_generic_count_does_not_attach_every_schema_table(self) -> None:
+        branches = generate_semantic_branches(
+            question="How many accounts are staying in East Bohemia region?",
+            schema_text="account(account_id, district_id, frequency, date); district(district_id, A3); loan(loan_id, amount, date)",
+            evidence="A3 contains the data of region.",
+        )
+        metric = next(branch for branch in branches if branch.branch_id == "metric_or_aggregation")
+        self.assertIn("account", metric.related_tables)
+        self.assertNotIn("loan", metric.related_tables)
+
+
+    def test_non_fallback_branch_without_tables_does_not_retrieve_everything(self) -> None:
+        store = MemoryStore()
+        store.add(_memory("mem_refund"), timestamp="t1", reason="test")
+        context = AgentVisibleTaskContext(
+            task_id="t",
+            db_version_id="retail_v1",
+            question="What is the answer?",
+            schema_text="mystery_table(id, note)",
+        )
+        result = select_memories_for_task(context=context, store=store)
+        self.assertEqual(result.selected_memory_ids, [])
+        self.assertEqual(result.candidates, [])
 
     def test_unreliable_branch_split_falls_back_to_full_question(self) -> None:
         branches = generate_semantic_branches(

@@ -243,3 +243,33 @@ mode: one_per_db
 - 组合搜索、最多 20 条候选下的策略训练、探索概率和 RL reward 尚未实现。
 - BIRD dev 只用于开发检查；正式记忆策略训练仍需要独立训练数据、任务时序构造和严格 train/validation/test 隔离。
 - 当前流程没有把检索检查结果报告为 SQL 准确率或模型能力结论。
+
+## 语义分支拆分审查（2026-09-26）
+
+本轮新增 `scripts/audit_branching.py`，用于在答题前、只基于当前问题、Agent 可见 schema 摘要和公开 evidence 审查语义分支拆分。审查报告写入 `docs/BRANCHING_AUDIT.md`。
+
+实际审查样本：15 个，其中 toy 3 个、BIRD dev 12 个。BIRD dev 只作为开发审查样本，不作为记忆策略训练集、最终论文测试集或模型准确率结果。
+
+本轮发现并修复的具体问题：
+
+- 旧拆分器只识别 `refund_semantics` 和 `city_sales_aggregation`，在本轮样本中对 12 个 BIRD dev 题目基本退化为 `full_question_fallback`，遗漏输出目标、过滤条件、聚合口径、排序/Top-K 和时间条件等需求。
+- `sqlite_schema_summary()` 对 SQLite 关键字表名（例如 `financial` 中的 `order`）执行 `PRAGMA table_info` 时未加引用，导致 schema 读取失败；现在已对表名做安全引用。
+- 旧 schema parser 对带括号的字段名和 toy 自由文本 schema 支持不足；现在支持 `table(columns)` 摘要和 toy 中的 `table.column` / 明显表名线索。
+- 字段匹配曾把整个 schema 文本当作题目证据，导致泛化问题（例如 “How many”）错误关联大量表；现在只从问题、evidence 和明确命中的 schema 项中取表字段，无法确认时标记不确定。
+- `direct charter-funded`、`exclusively virtual` 等业务过滤短语原本未被识别为过滤分支；现在加入窄规则。
+- 非 fallback 且无法确定关联表的分支不再触发“检索所有兼容记忆”，避免仅凭 requested-output 分支扩大候选池。
+
+仍不能可靠自动判断的问题：
+
+- 审查脚本发现 1 个 `needs_review` 项和 2 个 `gold_reference_only` 人工核对线索。`gold_reference_only` 只用于离线审查提示，gold SQL 不进入拆分器、检索器或 SQL Agent 输入。
+- 当前分支拆分仍是启发式规则，不是训练出的语义解析模型，也没有人工标注集作为充分验证。
+- SQL 表面结构不能自动证明语义分支正确；正式使用前仍需要制作小规模分支标注集，或引入可审计的模型/人工核验流程。
+- 本轮没有验证记忆未来效用、没有训练记忆策略、没有接入真实 SQL Agent。
+
+复现命令：
+
+```bash
+cd /root/autodl-tmp/sql-memory-agent
+PYTHONPATH=src /root/miniconda3/bin/python -m unittest discover -s tests -v
+/root/miniconda3/bin/python scripts/audit_branching.py --write-report
+```
