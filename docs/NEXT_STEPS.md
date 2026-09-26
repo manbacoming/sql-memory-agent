@@ -247,3 +247,27 @@ Recommended next action:
 3. Download full `train.zip` only after a fresh disk check and a plan to remove the archive after extraction, or after attaching a larger data disk.
 
 No BIRD archive, model, or GPU job was downloaded or started during this update.
+﻿
+## 11. 2026-09-26 BIRD Dev Integration Update
+
+Official BIRD `dev.zip` has been downloaded to the project-external data directory and used for loader/evaluator integration checks only.
+
+Key result:
+
+- `dev.zip` bytes: `346,207,293`
+- `dev.zip` SHA-256: `cdd6d19faeb45a23970b98d3ef6c40a87987c95459c2cf12076897a60cf5a630`
+- extracted root: `/root/autodl-tmp/sql-memory-agent-data/bird/extracted/dev_20240627`
+- one-task-per-database integration check: `11 / 11` successful
+
+This is not a model run and not a research result. It only verifies that real BIRD dev tasks can be loaded, mapped to SQLite databases, and evaluated by executing gold SQL in read-only mode.
+
+Next work should not train on BIRD dev. The next research step is to construct a proper training stream from training data, with:
+
+- empty memory at stream start;
+- current task writes only available to later tasks;
+- one memory retrieval per task;
+- `BirdAgentTaskInput` passed to the agent without gold SQL;
+- `BirdGoldRecord` used only by the evaluator;
+- explicit database version/snapshot identity for every task.
+
+Before downloading train data, run a fresh disk check and decide whether to keep or remove compressed archives after extraction.

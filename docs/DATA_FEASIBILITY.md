@@ -133,3 +133,82 @@ Do not download models in the same step.
 ## Current Recommendation
 
 For the next coding step, implement a BIRD dev/filtered-train metadata loader interface first, without downloading full train. The first real data run should use official `dev.zip` to validate SQLite execution and anti-leakage boundaries. The first training-oriented stream should use `bird23-train-filtered` metadata plus train databases only after confirming extraction fits and the zip can be removed.
+﻿
+## 2026-09-26 Dev Data Staging And Integration Check
+
+The official BIRD dev bundle was downloaded for integration and development checks only. It is not training data for memory-policy claims.
+
+Downloaded file outside Git:
+
+```text
+/root/autodl-tmp/sql-memory-agent-data/bird/raw/dev.zip
+```
+
+Download metadata, also outside Git:
+
+```text
+/root/autodl-tmp/sql-memory-agent-data/bird/raw/dev.zip.metadata.json
+```
+
+Recorded metadata:
+
+| Field | Value |
+|---|---|
+| Source URL | `https://bird-bench.oss-cn-beijing.aliyuncs.com/dev.zip` |
+| Download date UTC | `2026-09-26T02:03:52Z` |
+| Bytes | `346,207,293` |
+| SHA-256 | `cdd6d19faeb45a23970b98d3ef6c40a87987c95459c2cf12076897a60cf5a630` |
+
+ZIP safety checks before extraction:
+
+- Outer `dev.zip`: 5 entries, total uncompressed size `347,194,463` bytes, no path traversal entries, no high-ratio entries.
+- Nested `dev_databases.zip`: 124 entries, total uncompressed size `1,493,445,090` bytes, no path traversal entries, no high-ratio entries.
+
+Extracted dev root outside Git:
+
+```text
+/root/autodl-tmp/sql-memory-agent-data/bird/extracted/dev_20240627
+```
+
+The extracted dev bundle contains:
+
+```text
+dev.json
+dev.sql
+dev_tables.json
+dev_tied_append.json
+dev_databases.zip
+dev_databases/<db_id>/<db_id>.sqlite
+```
+
+Implemented code now supports BIRD dev loading with explicit agent/evaluator separation:
+
+- `src/sql_memory_agent/bird.py`
+- `src/sql_memory_agent/bird_eval.py`
+- `scripts/check_bird_dev.py`
+- `tests/test_bird_reader.py`
+
+Important boundary:
+
+- `BirdAgentTaskInput` contains question, db_id, evidence, difficulty, and SQLite path, but no gold SQL.
+- `BirdGoldRecord` contains evaluator-only gold SQL and must not be passed to the agent.
+
+Small read-only SQLite integration checks:
+
+```bash
+cd /root/autodl-tmp/sql-memory-agent
+/root/miniconda3/bin/python scripts/check_bird_dev.py --one-per-db --limit 20 --timeout-ms 2000 --max-rows 1000
+```
+
+Observed result:
+
+```text
+checked: 11
+success: 11
+failed: 0
+mode: one_per_db
+```
+
+This covers one task from each of the 11 BIRD dev databases. One checked query returned more than the configured `max_rows=1000` and was marked `truncated: true`; this is expected behavior for the integration guard and not a model result.
+
+The dev split remains for loader/evaluator development only. Formal memory strategy training still requires independent training data and task streams constructed with strict time ordering and leakage controls.
