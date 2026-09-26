@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,15 +12,15 @@ class ToyProtocolTests(unittest.TestCase):
     def test_current_task_cannot_retrieve_memory_it_just_wrote(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = run_sequential_demo(Path(tmp))
-        first = next(e for e in result.events if e.event_type == "retrieve_once" and e.task_id == "task_v1_learn_refund_rule")
-        self.assertEqual(first.payload["memory_ids"], [])
+        first = next(e for e in result.events if e.event_type == "memory_selection_once" and e.task_id == "task_v1_learn_refund_rule")
+        self.assertEqual(first.payload["selected_memory_ids"], [])
         self.assertIn("mem_v1_refund_rule", {m.memory_id for m in result.memory_store.all_records()})
 
     def test_v1_memory_is_not_retrievable_after_v2_schema_change(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = run_sequential_demo(Path(tmp))
-        v2 = next(e for e in result.events if e.event_type == "retrieve_once" and e.task_id == "task_v2_refund_schema_changed")
-        self.assertNotIn("mem_v1_refund_rule", v2.payload["memory_ids"])
+        v2 = next(e for e in result.events if e.event_type == "memory_selection_once" and e.task_id == "task_v2_refund_schema_changed")
+        self.assertNotIn("mem_v1_refund_rule", v2.payload["selected_memory_ids"])
         self.assertIs(result.memory_store.get("mem_v1_refund_rule").status, MemoryStatus.QUARANTINED)
 
     def test_paired_eval_uses_same_database_version(self) -> None:

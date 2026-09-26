@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import unittest
@@ -36,8 +36,8 @@ class BirdReaderTests(unittest.TestCase):
 
     def test_current_task_still_cannot_use_own_memory(self) -> None:
         result = run_sequential_demo()
-        first = next(e for e in result.events if e.event_type == "retrieve_once" and e.task_id == "task_v1_learn_refund_rule")
-        self.assertEqual(first.payload["memory_ids"], [])
+        first = next(e for e in result.events if e.event_type == "memory_selection_once" and e.task_id == "task_v1_learn_refund_rule")
+        self.assertEqual(first.payload["selected_memory_ids"], [])
 
 
 if __name__ == "__main__":

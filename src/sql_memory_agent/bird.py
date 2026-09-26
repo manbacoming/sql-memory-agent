@@ -1,7 +1,8 @@
-﻿"""BIRD dataset loading with explicit agent/evaluator separation."""
+"""BIRD dataset loading with explicit agent/evaluator separation."""
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -92,3 +93,22 @@ def load_bird_dev(dev_root: str | Path | None = None, *, limit: int | None = Non
         gold = BirdGoldRecord(question_id=question_id, db_id=db_id, gold_sql=gold_sql)
         tasks.append(BirdTaskRecord(agent_input=agent, gold=gold))
     return BirdDevBundle(root=str(root), tasks=tasks)
+
+
+def sqlite_schema_summary(sqlite_path: str | Path, *, max_tables: int = 80) -> str:
+    """Return a compact schema summary that is safe to show to an agent."""
+
+    path = Path(sqlite_path)
+    uri = f"file:{path.as_posix()}?mode=ro"
+    try:
+        with sqlite3.connect(uri, uri=True) as con:
+            table_rows = con.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            ).fetchmany(max_tables)
+            parts: list[str] = []
+            for (table_name,) in table_rows:
+                columns = [row[1] for row in con.execute(f"PRAGMA table_info({table_name})").fetchall()]
+                parts.append(f"{table_name}({', '.join(columns)})")
+            return "; ".join(parts)
+    except sqlite3.Error as exc:
+        raise BirdLoadError(f"could not read sqlite schema: {path}: {exc}") from exc

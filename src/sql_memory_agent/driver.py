@@ -1,8 +1,9 @@
-﻿"""Deterministic sequential toy experiment driver."""
+"""Deterministic sequential toy experiment driver."""
 from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+from .branching import AgentVisibleTaskContext, select_memories_for_task
 from .example_data import DEFAULT_DATA_ROOT, ensure_toy_databases, toy_tasks
 from .memory import MemoryStore
 from .models import DatabaseVersion, MemoryRecord, TaskRecord
@@ -48,6 +49,14 @@ def _refund_memory_v2(source_task_id: str, timestamp: str) -> MemoryRecord:
         depends_on_columns=["orders.order_amount", "refund_events.returned_amount", "refund_events.approved"],
     )
 
+def _task_context(task: TaskRecord, db: DatabaseVersion) -> AgentVisibleTaskContext:
+    return AgentVisibleTaskContext(
+        task_id=task.task_id,
+        db_version_id=db.version_id,
+        question=task.question,
+        schema_text=db.description,
+    )
+
 def run_sequential_demo(data_root: Path = DEFAULT_DATA_ROOT) -> SequentialRunResult:
     dbs: dict[str, DatabaseVersion] = ensure_toy_databases(data_root)
     tasks: list[TaskRecord] = toy_tasks()
@@ -71,8 +80,9 @@ def run_sequential_demo(data_root: Path = DEFAULT_DATA_ROOT) -> SequentialRunRes
         current_db = db.version_id
 
         step += 1
-        retrieved = store.retrieve(db_version_id=db.version_id, query_tables={"orders", "refunds", "refund_events"})
-        events.append(EventLogEntry("retrieve_once", task.task_id, db.version_id, {"memory_ids": [m.memory_id for m in retrieved]}))
+        selection = select_memories_for_task(context=_task_context(task, db), store=store)
+        retrieved = selection.selected_memories
+        events.append(EventLogEntry("memory_selection_once", task.task_id, db.version_id, selection.to_log_payload()))
 
         step += 1
         outcome = solver.solve(task, db, retrieved, budget_turns=4)
