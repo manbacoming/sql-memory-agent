@@ -1,4 +1,4 @@
-﻿# ???????
+# ???????
 
 ???2026-09-26
 
@@ -180,8 +180,10 @@ cd /root/autodl-tmp/sql-memory-agent
 
 ```text
 checked: 11
-success: 11
-failed: 0
+evaluable: 10
+execution_failed: 0
+excluded_truncated: 1
+excluded_other: 0
 mode: one_per_db
 ```
 
@@ -190,3 +192,39 @@ mode: one_per_db
 ## 10. ????
 
 ??? coding ????? BIRD dev / filtered-train metadata loader interface????? dev ????????????? run ???????? `dev.zip` ?? SQLite execution ? anti-leakage ?????????????? `bird23-train-filtered` metadata ? train databases??????????????? train?
+
+## BIRD dev 截断结果处理（2026-09-26）
+
+本项目现在把真实 BIRD dev 集成检查中的 SQL 执行结果分成三类：
+
+- `execution_failed`：标准 SQL 在只读 SQLite 执行中失败。这说明当前题目不能通过本检查，应单独记录错误原因。
+- `incomplete`：SQL 能开始执行，但结果无法完整取得，例如超过 `--max-rows` 导致 `max_rows_exceeded`，或触发超时保护。此类题目暂时从后续正确性比较样本中排除。
+- `complete`：SQL 执行成功，结果完整取得，可进入后续执行结果比较。
+
+被标记为 `incomplete` 的题目不会计入 `evaluable`，不会被赋予正确或错误标签，也不得产生训练奖励。这只是当前开发检查的临时排除规则，不会修改或删除原始 BIRD 数据。
+
+本次实际运行命令：
+
+```bash
+cd /root/autodl-tmp/sql-memory-agent
+/root/miniconda3/bin/python scripts/check_bird_dev.py --one-per-db --limit 20 --timeout-ms 2000 --max-rows 1000
+```
+
+实际统计：
+
+```text
+checked: 11
+evaluable: 10
+execution_failed: 0
+excluded_truncated: 1
+excluded_other: 0
+mode: one_per_db
+```
+
+被排除题目：
+
+| question_id | db_id | reason |
+|---:|---|---|
+| 340 | `card_games` | `max_rows_exceeded` |
+
+这项检查仍然只是 BIRD dev 的 loader / SQLite / evaluator 接口检查，不是模型准确率，也不是 SQL Agent 实验结果。正式记忆策略训练仍需使用独立训练数据，并按任务时序构造任务流。
