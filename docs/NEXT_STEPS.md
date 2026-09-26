@@ -370,3 +370,18 @@ cd /root/autodl-tmp/sql-memory-agent
 PYTHONPATH=src /root/miniconda3/bin/python -m unittest discover -s tests -v
 /root/miniconda3/bin/python scripts/audit_branching.py --write-report
 ```
+
+## 语义分支质量核对（2026-09-26）
+
+本轮新增 `docs/BRANCHING_REVIEW.md`，对 `docs/BRANCHING_AUDIT.md` 中 15 个样本逐题核对分支质量。该核对表明确区分：
+
+- `old_fixed=15` 只表示旧硬编码拆分器在 15 个样本中每题至少遗漏一种粗粒度需求类型，不表示当前分支全部正确。
+- `needs_review=0` 只表示当前规则没有遗漏审查脚本能自动识别的粗粒度需求类型，不等于语义正确性已验证。
+- `gold_reference_only=1` 是离线人工核对线索，gold SQL 不进入拆分器、检索器或 SQL Agent 输入。
+
+本轮又修复了两个可复现问题：
+
+1. Q39 的 `from Fresno schools` 过滤条件曾被漏掉，已加入测试 `test_from_city_schools_is_filter_condition`。
+2. Q340 的 `powerful` 曾误匹配字段 `power`，已改为字段词边界匹配，并加入测试 `test_column_matching_uses_boundaries_for_powerful_foil`。
+
+仍未完成：真实 SQL Agent、组合搜索、RL、记忆未来效用评测，以及可训练/可评估的语义分支标注集。

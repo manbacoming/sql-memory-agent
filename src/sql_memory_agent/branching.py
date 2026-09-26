@@ -157,7 +157,8 @@ def _matching_schema_items(text: str, schema_text: str) -> tuple[list[str], list
             quoted = f"`{col_low}`"
             if col_low in _GENERIC_SCHEMA_WORDS and quoted not in lowered:
                 continue
-            if quoted in lowered or col_low in lowered or normalized in lowered:
+            normalized_match = normalized != col_low and normalized in lowered
+            if quoted in lowered or _token_present(lowered, col_low) or normalized_match:
                 matched_columns.add(f"{table}.{column}")
                 matched_tables.add(table)
     return sorted(matched_tables), sorted(matched_columns)
@@ -273,7 +274,7 @@ def generate_semantic_branches(*, question: str, schema_text: str, evidence: str
 
     filter_phrases = _phrase_matches(
         natural_text,
-        [r"with [^?.;]*", r"where [^?.;]*", r"in [A-Z][A-Za-z ]+", r"whose [^?.;]*", r"that (?:are|is|has|have|were|was)[^?.;]*", r"direct [^?.;]*", r"charter[- ][^?.;]*", r"[^?.;]*funded schools", r"exclusively virtual", r"greater than [^?.;]*", r"less than [^?.;]*", r"more than [^?.;]*", r"not more than [^?.;]*", r"over [0-9.]+", r"under [^?.;]*"],
+        [r"with [^?.;]*", r"where [^?.;]*", r"in [A-Z][A-Za-z ]+", r"from [A-Z][A-Za-z ]+ schools", r"whose [^?.;]*", r"that (?:are|is|has|have|were|was)[^?.;]*", r"direct [^?.;]*", r"charter[- ][^?.;]*", r"[^?.;]*funded schools", r"exclusively virtual", r"greater than [^?.;]*", r"less than [^?.;]*", r"more than [^?.;]*", r"not more than [^?.;]*", r"over [0-9.]+", r"under [^?.;]*"],
     )
     if filter_phrases:
         branches.append(_branch(

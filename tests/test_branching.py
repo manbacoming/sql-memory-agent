@@ -74,6 +74,29 @@ class BranchingTests(unittest.TestCase):
         self.assertIn("filter_conditions", ids)
         self.assertIn("time_conditions", ids)
 
+
+
+    def test_column_matching_uses_boundaries_for_powerful_foil(self) -> None:
+        branches = generate_semantic_branches(
+            question="Which are the cards that have incredibly powerful foils?",
+            schema_text="cards(power, cardKingdomFoilId, cardKingdomId)",
+            evidence="incredibly powerful foils refers to cardKingdomFoilId is not null AND cardKingdomId is not null",
+        )
+        fields = {field for branch in branches for field in branch.related_columns}
+        self.assertIn("cards.cardKingdomFoilId", fields)
+        self.assertIn("cards.cardKingdomId", fields)
+        self.assertNotIn("cards.power", fields)
+
+    def test_from_city_schools_is_filter_condition(self) -> None:
+        branches = generate_semantic_branches(
+            question="What is the average number of test takers from Fresno schools that opened between 1/1/1980 and 12/31/1980?",
+            schema_text="schools(OpenDate, City, School); satscores(NumTstTakr)",
+        )
+        ids = {branch.branch_id for branch in branches}
+        self.assertIn("filter_conditions", ids)
+        self.assertIn("time_conditions", ids)
+        self.assertIn("metric_or_aggregation", ids)
+
     def test_generic_count_does_not_attach_every_schema_table(self) -> None:
         branches = generate_semantic_branches(
             question="How many accounts are staying in East Bohemia region?",
