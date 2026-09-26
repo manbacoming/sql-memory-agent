@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from .memory import MemoryStore
 from .models import MemoryRecord
@@ -49,14 +49,41 @@ class SemanticBranch:
         return data
 
 
+CandidateMatchType = Literal["direct", "indirect", "exploration", "uncertain"]
+
+
 @dataclass(frozen=True)
-class MemoryCandidate:
-    memory_id: str
+class CandidateSource:
     branch_id: str
+    match_type: CandidateMatchType
     reason: str
+    branch_requirement: str
+    matched_content: list[str] = field(default_factory=list)
+    matched_tables: list[str] = field(default_factory=list)
+    matched_columns: list[str] = field(default_factory=list)
+    dependency_chain: list[str] = field(default_factory=list)
+    evidence: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass
+class MemoryCandidate:
+    memory_id: str
+    sources: list[CandidateSource] = field(default_factory=list)
+
+    def add_source(self, source: CandidateSource) -> None:
+        key = (source.branch_id, source.match_type, tuple(source.dependency_chain))
+        existing = {(item.branch_id, item.match_type, tuple(item.dependency_chain)) for item in self.sources}
+        if key not in existing:
+            self.sources.append(source)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "memory_id": self.memory_id,
+            "sources": [source.to_dict() for source in self.sources],
+        }
 
 
 @dataclass(frozen=True)
@@ -316,7 +343,10 @@ def generate_semantic_branches(*, question: str, schema_text: str, evidence: str
             schema_text=schema_text,
             public_text=public_text,
             query_terms=["rank", "top", "highest", "lowest", "order"],
-            dependencies=["metric_or_aggregation"] if any(b.branch_id == "metric_or_aggregation" for b in branches) else [],
+            dependencies=(
+                (["metric_or_aggregation"] if any(b.branch_id == "metric_or_aggregation" for b in branches) else [])
+                + (["refund_semantics"] if any(b.branch_id == "refund_semantics" for b in branches) else [])
+            ),
         ))
 
     if _contains_any(lowered, {"join", "each", "respective", "per ", " by ", "among"}) and len(_schema_tables(schema_text)) > 1:
@@ -350,11 +380,106 @@ def generate_semantic_branches(*, question: str, schema_text: str, evidence: str
     return branches
 
 
-def _candidate_reason(branch: SemanticBranch, memory: MemoryRecord) -> str:
-    tables = sorted(set(branch.query_tables) & set(memory.depends_on_tables))
-    if tables:
-        return f"Branch `{branch.branch_id}` needs tables {', '.join(tables)}; this memory depends on those tables."
-    return f"Branch `{branch.branch_id}` is the full-question fallback; this memory is compatible with the current database version."
+def _memory_text(memory: MemoryRecord) -> str:
+    return "\n".join([
+        memory.content,
+        " ".join(memory.depends_on_tables),
+        " ".join(memory.depends_on_columns),
+    ]).lower()
+
+
+def _content_hits(text: str, terms: list[str]) -> list[str]:
+    hits: list[str] = []
+    for term in terms:
+        normalized = term.lower().strip()
+        if not normalized:
+            continue
+        if " " in normalized or "_" in normalized:
+            present = normalized in text or normalized.replace(" ", "_") in text
+        else:
+            present = _token_present(text, normalized)
+        if present and term not in hits:
+            hits.append(term)
+    return hits
+
+
+def _direct_semantic_source(branch: SemanticBranch, memory: MemoryRecord) -> CandidateSource | None:
+    memory_text = _memory_text(memory)
+    branch_text = "\n".join([branch.branch_id, branch.requirement, *branch.source_evidence, *branch.query_terms]).lower()
+    terms_by_branch = {
+        "refund_semantics": ["refund", "refunds", "returned amount", "returned_amount", "deduct", "subtract", "net sales"],
+        "metric_or_aggregation": ["average", "count", "sum", "total", "rate", "percent", "aggregation", "group by", "net sales"],
+        "ranking_or_extreme": ["highest", "lowest", "top", "most", "least", "rank", "order by", "descending", "maximum", "minimum"],
+        "requested_output": ["return", "select", "output", "list", "phone", "city", "api id", "name"],
+        "filter_conditions": ["filter", "where", "condition", "threshold", "greater than", "less than", "not null", "county", "region"],
+        "time_conditions": ["date", "year", "opened", "closed", "between", "after", "before"],
+        "entity_linking": ["join", "foreign key", "link", "entity", "group by"],
+    }
+    semantic_terms = terms_by_branch.get(branch.branch_id, [])
+    branch_hits = _content_hits(branch_text, semantic_terms)
+    memory_hits = _content_hits(memory_text, semantic_terms)
+    matched_terms = [term for term in semantic_terms if term in branch_hits and term in memory_hits]
+    if branch.branch_id == "refund_semantics":
+        core_refund_terms = {"refund", "refunds", "returned amount", "returned_amount", "deduct", "subtract"}
+        if not (set(matched_terms) & core_refund_terms):
+            return None
+    if not matched_terms:
+        return None
+    matched_tables = sorted(set(branch.related_tables) & set(memory.depends_on_tables))
+    matched_columns = sorted(set(branch.related_columns) & set(memory.depends_on_columns))
+    return CandidateSource(
+        branch_id=branch.branch_id,
+        match_type="direct",
+        reason=(
+            f"Memory content contains semantic terms {', '.join(matched_terms)} that match "
+            f"branch `{branch.branch_id}`; table/column overlap is only supporting evidence."
+        ),
+        branch_requirement=branch.requirement or branch.description,
+        matched_content=matched_terms,
+        matched_tables=matched_tables,
+        matched_columns=matched_columns,
+        evidence=branch.source_evidence,
+    )
+
+
+def _exploration_source(branch: SemanticBranch, memory: MemoryRecord) -> CandidateSource | None:
+    matched_tables = sorted(set(branch.related_tables or branch.query_tables) & set(memory.depends_on_tables))
+    matched_columns = sorted(set(branch.related_columns) & set(memory.depends_on_columns))
+    if not matched_tables and not matched_columns and not branch.fallback:
+        return None
+    if branch.fallback:
+        reason = f"Branch `{branch.branch_id}` is a fallback; compatible memory is kept only as an exploration candidate."
+    else:
+        reason = (
+            f"Branch `{branch.branch_id}` shares tables/columns with this memory, but no direct semantic match was verified; "
+            "kept as exploration rather than credited as solving the branch."
+        )
+    return CandidateSource(
+        branch_id=branch.branch_id,
+        match_type="exploration",
+        reason=reason,
+        branch_requirement=branch.requirement or branch.description,
+        matched_tables=matched_tables,
+        matched_columns=matched_columns,
+        evidence=branch.source_evidence,
+    )
+
+
+def _indirect_source(branch: SemanticBranch, dependency: SemanticBranch, direct_source: CandidateSource) -> CandidateSource:
+    return CandidateSource(
+        branch_id=branch.branch_id,
+        match_type="indirect",
+        reason=(
+            f"Branch `{branch.branch_id}` depends on `{dependency.branch_id}`; the memory directly matches "
+            f"that upstream branch, not the current branch itself."
+        ),
+        branch_requirement=branch.requirement or branch.description,
+        matched_content=list(direct_source.matched_content),
+        matched_tables=list(direct_source.matched_tables),
+        matched_columns=list(direct_source.matched_columns),
+        dependency_chain=[dependency.branch_id, branch.branch_id],
+        evidence=list(branch.source_evidence),
+    )
 
 
 def select_memories_for_task(
@@ -363,7 +488,7 @@ def select_memories_for_task(
     store: MemoryStore,
     policy: MemorySelectionPolicy | None = None,
 ) -> MemorySelectionResult:
-    """Run one pre-solver memory selection pass with branch-level retrieval."""
+    """Run one pre-solver memory selection pass with auditable branch-level evidence."""
 
     policy = policy or MemorySelectionPolicy()
     branches = generate_semantic_branches(
@@ -371,22 +496,51 @@ def select_memories_for_task(
         schema_text=context.schema_text,
         evidence=context.evidence,
     )
-    candidates: list[MemoryCandidate] = []
+    branch_by_id = {branch.branch_id: branch for branch in branches}
+    memories = store.retrieve(db_version_id=context.db_version_id, query_tables=None)
+    candidates_by_id: dict[str, MemoryCandidate] = {}
     selected_by_id: dict[str, MemoryRecord] = {}
+    direct_sources: dict[tuple[str, str], CandidateSource] = {}
+
+    def add_source(memory: MemoryRecord, source: CandidateSource) -> None:
+        candidate = candidates_by_id.setdefault(memory.memory_id, MemoryCandidate(memory.memory_id))
+        candidate.add_source(source)
+        if memory.memory_id not in selected_by_id and len(selected_by_id) < policy.max_candidates:
+            selected_by_id[memory.memory_id] = memory
 
     for branch in branches:
-        query_tables = set(branch.query_tables) if branch.query_tables else None
-        if not query_tables and not branch.fallback:
-            continue
-        for memory in store.retrieve(db_version_id=context.db_version_id, query_tables=query_tables):
-            candidates.append(MemoryCandidate(memory.memory_id, branch.branch_id, _candidate_reason(branch, memory)))
-            if memory.memory_id not in selected_by_id and len(selected_by_id) < policy.max_candidates:
-                selected_by_id[memory.memory_id] = memory
+        for memory in memories:
+            source = _direct_semantic_source(branch, memory)
+            if source is None:
+                continue
+            direct_sources[(memory.memory_id, branch.branch_id)] = source
+            add_source(memory, source)
+
+    for branch in branches:
+        for dependency_id in branch.dependencies:
+            dependency = branch_by_id.get(dependency_id)
+            if dependency is None:
+                continue
+            for memory in memories:
+                direct_source = direct_sources.get((memory.memory_id, dependency_id))
+                if direct_source is not None:
+                    add_source(memory, _indirect_source(branch, dependency, direct_source))
+
+    for branch in branches:
+        for memory in memories:
+            if (memory.memory_id, branch.branch_id) in direct_sources:
+                continue
+            existing = candidates_by_id.get(memory.memory_id)
+            if existing is not None and any(source.branch_id == branch.branch_id for source in existing.sources):
+                continue
+            source = _exploration_source(branch, memory)
+            if source is not None:
+                add_source(memory, source)
 
     return MemorySelectionResult(
         task_context=context,
         branches=branches,
-        candidates=candidates,
+        candidates=list(candidates_by_id.values()),
         selected_memories=list(selected_by_id.values()),
         policy=policy,
     )

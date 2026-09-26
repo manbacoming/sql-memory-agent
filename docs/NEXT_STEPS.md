@@ -306,40 +306,49 @@ mode: one_per_db
 
 ## 语义分支记忆选择（2026-09-26）
 
-本轮已经实现一个最小、确定性的“先拆分语义分支，再按分支检索旧记忆，合并候选，最终只向 SQL Agent 提供一次记忆组合”的开发流程。该流程位于 `src/sql_memory_agent/branching.py`，目前服务 toy harness 和少量 BIRD dev 输入隔离检查。
+本项目已经实现一个最小、确定性的“先拆分语义分支，再按分支检索旧记忆，合并候选，最终只向 SQL Agent 提供一次记忆组合”的开发流程。该流程位于 `src/sql_memory_agent/branching.py`，目前服务 toy harness 和少量 BIRD dev 输入隔离检查。
 
 已经实现并验证的部分：
 
 - `AgentVisibleTaskContext` 只包含当前题目、数据库版本、Agent 可见 schema 摘要和公开 evidence；不接收当前题或未来题的 gold SQL、gold 执行结果或评测标签。
 - `generate_semantic_branches()` 使用保守启发式生成可检查的语义分支，例如“确定退款或退货金额字段如何影响净销售额”和“按城市汇总订单金额并比较销售额”。如果无法可靠拆分，则退化为 `full_question_fallback` 单分支。
-- `select_memories_for_task()` 对每个分支检索旧记忆，记录候选进入原因，然后按 `memory_id` 去重，排除 `DELETED`、`QUARANTINED` 和数据库版本不兼容的记忆。
-- 每道题对求解器只有一次最终记忆组合，日志字段 `solver_memory_selection_count` 固定为 `1`。分支检索只是这一次选择的内部步骤，不会根据本题执行反馈再次检索。
+- `select_memories_for_task()` 现在先读取所有状态可用、数据库版本兼容的记忆，再为每条记忆记录它从哪些分支进入候选池，以及进入方式是 `direct`、`indirect` 还是 `exploration`。
+- `direct` 表示记忆内容中有可指出的语义规则与分支要求对应；表名和字段名重叠只能作为辅助证据，不能单独证明直接相关。
+- `indirect` 表示记忆直接解决上游依赖分支，而当前分支依赖该上游结果。例如“取最高净销售额”可以间接依赖“退款如何扣除”的记忆，但不能把退款记忆记为直接解决排序分支。
+- `exploration` 表示只有表/字段重叠或 fallback 兼容性，暂时保留为候选以免过早漏召回；它不能被解释为语义匹配证据，也不能用于给该分支重复记功。
+- 候选检索后按 `memory_id` 合并，保留完整 `sources` 记录；最终给求解器的仍是一次性选定组合，日志字段 `solver_memory_selection_count` 固定为 `1`。
 - 空记忆库会产生空组合；候选不足 `20` 条时不会补齐。`MemorySelectionPolicy` 保留 `max_candidates` 和 `exploration_probability` 字段，但当前策略仍是固定启发式，不是已训练策略。
+- `QUARANTINED`、`DELETED` 和数据库版本不兼容的记忆不会进入可用候选。
 - `sqlite_schema_summary()` 只读读取 SQLite schema 摘要，供 BIRD dev 开发检查构造 Agent 可见 schema；BIRD dev 仍只用于集成检查，不用于训练记忆策略。
 
 一个 toy 示例：
 
-| 分支 | 检索到的记忆 | 进入候选池原因 | 最终组合 |
-|---|---|---|---|
-| `refund_semantics` | `mem_v1_refund_rule` | 分支需要 `orders`、`refunds`，记忆依赖这些表 | `mem_v1_refund_rule` |
-| `city_sales_aggregation` | `mem_v1_refund_rule` | 分支需要 `orders`，记忆依赖该表 | 去重后仍为 `mem_v1_refund_rule` |
+| 分支 | 记忆 | 来源类别 | 进入候选池原因 | 最终组合 |
+|---|---|---|---|---|
+| `refund_semantics` | `mem_v1_refund_rule` | `direct` | 记忆内容明确包含 `refund` / `subtract` / `net sales` 等退款口径规则；表/字段重叠只作为辅助证据 | `mem_v1_refund_rule` |
+| `ranking_or_extreme` | `mem_v1_refund_rule` | `indirect` | 排序分支依赖 `refund_semantics` 的净销售额口径；该记忆直接对应上游退款分支，而不是直接解决排序 | 去重后仍只提供一次 `mem_v1_refund_rule` |
+| `requested_output` | `mem_v1_refund_rule` | `exploration` | 只有共享表/字段线索，没有证据说明该记忆直接决定输出列 | 不重复记功 |
 
 新增/更新的测试覆盖：
 
 - gold SQL 不会进入分支检索日志；
 - 每题只向求解器提供一次最终组合；
 - 空记忆库允许空组合；
-- 同一记忆被多个分支命中时最终去重；
+- 同一记忆被多个分支命中时按 `memory_id` 合并，并保留每个来源的类别与证据；
+- “扣退款”记忆只对退款口径分支直接相关，不会因共享 `orders` / `refunds` 表而被标成直接解决输出或排序分支；
+- 排序分支可以通过依赖链间接使用退款口径记忆，但不重复记功；
+- 两条真正互补、分别解决不同要求的记忆可以同时进入候选；
+- 字段名相似但含义不同，或只有共享表证据时，只能作为 `exploration`，不能伪装成确定性语义匹配；
 - `QUARANTINED`、`DELETED` 和数据库版本不兼容记忆不会进入组合；
 - 无法可靠拆分语义时退化为完整问题分支。
 
 仍未实现或尚不能声称完成的部分：
 
 - 真实 SQL Agent 尚未接入；当前求解器仍是 `DeterministicTestingSolver` 测试桩。
-- 语义分支正确性没有可靠验证器，目前只是保守启发式与边界测试。
-- 组合搜索、最多 20 条候选下的策略训练、探索概率和 RL reward 尚未实现。
+- 语义分支正确性没有可靠验证器，目前只是保守启发式、人工审查和边界测试。
+- 动态候选池、组合搜索、最多 20 条候选下的策略训练、探索概率和 RL reward 尚未实现。
+- 本轮没有验证记忆未来效用，没有训练记忆策略，也没有把检索检查结果报告为 SQL 准确率或模型能力结论。
 - BIRD dev 只用于开发检查；正式记忆策略训练仍需要独立训练数据、任务时序构造和严格 train/validation/test 隔离。
-- 当前流程没有把检索检查结果报告为 SQL 准确率或模型能力结论。
 
 ## 语义分支拆分审查（2026-09-26）
 

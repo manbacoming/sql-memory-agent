@@ -22,6 +22,35 @@ def _memory(memory_id: str, *, status: MemoryStatus = MemoryStatus.ACTIVE, db_ve
     )
 
 
+def _custom_memory(
+    memory_id: str,
+    content: str,
+    *,
+    tables: list[str],
+    columns: list[str] | None = None,
+    status: MemoryStatus = MemoryStatus.ACTIVE,
+    db_version: str = "retail_v1",
+) -> MemoryRecord:
+    return MemoryRecord(
+        memory_id=memory_id,
+        content=content,
+        source_task_id="source",
+        created_at=memory_id,
+        applies_to_db_version=db_version,
+        depends_on_tables=tables,
+        depends_on_columns=list(columns or []),
+        status=status,
+    )
+
+
+def _source_types(result, memory_id: str) -> dict[str, set[str]]:
+    candidate = next(candidate for candidate in result.candidates if candidate.memory_id == memory_id)
+    grouped: dict[str, set[str]] = {}
+    for source in candidate.sources:
+        grouped.setdefault(source.branch_id, set()).add(source.match_type)
+    return grouped
+
+
 class BranchingTests(unittest.TestCase):
     def test_empty_memory_store_allows_empty_combination(self) -> None:
         store = MemoryStore()
@@ -35,7 +64,7 @@ class BranchingTests(unittest.TestCase):
         self.assertEqual(result.selected_memory_ids, [])
         self.assertGreaterEqual(len(result.branches), 1)
 
-    def test_duplicate_candidates_are_deduplicated_in_final_combination(self) -> None:
+    def test_duplicate_candidates_are_merged_with_source_records(self) -> None:
         store = MemoryStore()
         store.add(_memory("mem_refund"), timestamp="t1", reason="test")
         context = AgentVisibleTaskContext(
@@ -45,8 +74,53 @@ class BranchingTests(unittest.TestCase):
             schema_text="orders(order_amount); stores(store_id); cities(city_name); refunds(refund_amount)",
         )
         result = select_memories_for_task(context=context, store=store)
-        self.assertGreaterEqual(len(result.candidates), 2)
+        self.assertEqual([candidate.memory_id for candidate in result.candidates], ["mem_refund"])
         self.assertEqual(result.selected_memory_ids, ["mem_refund"])
+        sources = _source_types(result, "mem_refund")
+        self.assertIn("direct", sources["refund_semantics"])
+        self.assertNotIn("direct", sources.get("requested_output", set()))
+        self.assertNotIn("direct", sources.get("ranking_or_extreme", set()))
+        self.assertIn("indirect", sources["ranking_or_extreme"])
+
+    def test_complementary_memories_for_different_requirements_are_kept(self) -> None:
+        store = MemoryStore()
+        store.add(_memory("mem_refund"), timestamp="t1", reason="test")
+        store.add(_custom_memory(
+            "mem_rank",
+            "For ranked city reports, order by aggregated city net sales descending and take the top row.",
+            tables=["orders", "cities"],
+            columns=["cities.city_name", "orders.order_amount"],
+        ), timestamp="t2", reason="test")
+        context = AgentVisibleTaskContext(
+            task_id="t",
+            db_version_id="retail_v1",
+            question="Which city has the highest net sales after refunds?",
+            schema_text="orders(order_amount); cities(city_name); refunds(refund_amount)",
+        )
+        result = select_memories_for_task(context=context, store=store)
+        self.assertEqual(result.selected_memory_ids, ["mem_refund", "mem_rank"])
+        self.assertIn("direct", _source_types(result, "mem_refund")["refund_semantics"])
+        self.assertIn("direct", _source_types(result, "mem_rank")["ranking_or_extreme"])
+
+    def test_shared_table_only_is_exploration_not_direct(self) -> None:
+        store = MemoryStore()
+        store.add(_custom_memory(
+            "mem_power",
+            "Use cards.power to reason about combat strength.",
+            tables=["cards"],
+            columns=["cards.power"],
+        ), timestamp="t1", reason="test")
+        context = AgentVisibleTaskContext(
+            task_id="t",
+            db_version_id="retail_v1",
+            question="Which are the cards that have incredibly powerful foils?",
+            schema_text="cards(power, cardKingdomFoilId, cardKingdomId)",
+            evidence="incredibly powerful foils refers to cardKingdomFoilId is not null AND cardKingdomId is not null",
+        )
+        result = select_memories_for_task(context=context, store=store)
+        sources = _source_types(result, "mem_power")
+        self.assertFalse(any("direct" in match_types for match_types in sources.values()))
+        self.assertTrue(any("exploration" in match_types for match_types in sources.values()))
 
     def test_quarantined_deleted_and_wrong_version_memories_are_filtered(self) -> None:
         store = MemoryStore()
