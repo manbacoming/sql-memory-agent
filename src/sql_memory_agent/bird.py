@@ -92,9 +92,10 @@ def load_bird_split(
     if not isinstance(records, list):
         raise BirdLoadError(f"{split}.json must contain a list")
     tasks: list[BirdTaskRecord] = []
-    for raw in records[:limit]:
+    for record_index, raw in enumerate(records[:limit]):
         try:
-            question_id = int(raw["question_id"])
+            raw_question_id = raw.get("question_id", record_index)
+            question_id = int(raw_question_id)
             db_id = str(raw["db_id"])
             question = str(raw["question"])
             evidence = str(raw.get("evidence") or "")

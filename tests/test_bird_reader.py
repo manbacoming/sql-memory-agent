@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
-from sql_memory_agent.bird import default_bird_dev_root, load_bird_dev, sqlite_path_for_db
+from sql_memory_agent.bird import default_bird_dev_root, load_bird_dev, load_bird_train, sqlite_path_for_db
 from sql_memory_agent.driver import run_sequential_demo
 
 
@@ -38,6 +39,26 @@ class BirdReaderTests(unittest.TestCase):
         result = run_sequential_demo()
         first = next(e for e in result.events if e.event_type == "memory_selection_once" and e.task_id == "task_v1_learn_refund_rule")
         self.assertEqual(first.payload["selected_memory_ids"], [])
+
+    def test_train_records_without_question_id_use_stable_file_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_dir = root / "train_databases" / "shop"
+            db_dir.mkdir(parents=True)
+            sqlite_path = db_dir / "shop.sqlite"
+            sqlite_path.write_bytes(b"SQLite format 3\x00")
+            (root / "train.json").write_text(
+                json.dumps(
+                    [
+                        {"db_id": "shop", "question": "first", "evidence": "", "SQL": "SELECT 1"},
+                        {"db_id": "shop", "question": "second", "evidence": "", "SQL": "SELECT 2"},
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            bundle = load_bird_train(root)
+        self.assertEqual([task.agent_input.question_id for task in bundle.tasks], [0, 1])
+        self.assertEqual([task.gold.question_id for task in bundle.tasks], [0, 1])
 
 
 if __name__ == "__main__":

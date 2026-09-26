@@ -77,13 +77,22 @@ def main() -> int:
         report["blocked_reasons"].append("GPU state cannot be verified with nvidia-smi")
 
     try:
-        bundle = load_bird_train(train_root, limit=200, require_sqlite=True)
-        flow = same_db_task_flow(bundle.tasks, min_tasks=2)
-        report["train_tasks_loaded"] = len(bundle.tasks)
+        metadata_bundle = load_bird_train(train_root, require_sqlite=False)
+        available_tasks = []
+        for task in metadata_bundle.tasks:
+            if Path(task.agent_input.sqlite_path).is_file():
+                available_tasks.append(task)
+        flow = same_db_task_flow(available_tasks, min_tasks=2)
+        report["train_tasks_loaded"] = len(metadata_bundle.tasks)
+        report["train_tasks_with_staged_sqlite"] = len(available_tasks)
+        report["staged_train_db_ids"] = sorted({task.agent_input.db_id for task in available_tasks})
         report["same_db_flow_length"] = len(flow)
         report["same_db_flow_db_id"] = flow[0].agent_input.db_id if flow else None
+        if not flow:
+            report["blocked_reasons"].append("No staged BIRD train database has at least two tasks")
     except BirdLoadError as exc:
         report["train_tasks_loaded"] = 0
+        report["train_tasks_with_staged_sqlite"] = 0
         report["same_db_flow_length"] = 0
         report["blocked_reasons"].append(str(exc))
 
