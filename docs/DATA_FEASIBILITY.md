@@ -228,3 +228,56 @@ mode: one_per_db
 | 340 | `card_games` | `max_rows_exceeded` |
 
 这项检查仍然只是 BIRD dev 的 loader / SQLite / evaluator 接口检查，不是模型准确率，也不是 SQL Agent 实验结果。正式记忆策略训练仍需使用独立训练数据，并按任务时序构造任务流。
+
+## 11. 2026-09-26 train 链路资源复核
+
+本轮没有下载 BIRD train、模型或额外数据，只做只读复核和代码预检。
+
+当前数据盘：
+
+```text
+/root/autodl-tmp total: 53,687,091,200 bytes
+/root/autodl-tmp used: 2,188,656,640 bytes
+/root/autodl-tmp free: 51,498,434,560 bytes
+```
+
+当前已有数据：
+
+```text
+/root/autodl-tmp/sql-memory-agent-data/bird/raw/dev.zip
+/root/autodl-tmp/sql-memory-agent-data/bird/extracted/dev_20240627
+/root/autodl-tmp/sql-memory-agent-data/toy
+```
+
+当前缺少真实 train 链路必需资源：
+
+```text
+/root/autodl-tmp/sql-memory-agent-data/bird/raw/train.zip
+/root/autodl-tmp/sql-memory-agent-data/bird/extracted/train_20230711/train.json
+/root/autodl-tmp/sql-memory-agent-data/bird/extracted/train_20230711/train_databases/
+/root/autodl-tmp/sql-memory-agent-models 下的模型 config/tokenizer/weights
+```
+
+官方 train URL：
+
+```text
+https://bird-bench.oss-cn-beijing.aliyuncs.com/train.zip
+```
+
+只读 HEAD 结果：
+
+```text
+Content-Length: 8,919,543,554 bytes
+Content-Type: application/zip
+Accept-Ranges: bytes
+Last-Modified: Tue, 11 Jul 2023 06:13:29 GMT
+```
+
+空间判断：
+
+- 当前剩余约 48 GiB。
+- BIRD 官方页面说明全量数据库总规模约 33.4GB。
+- 如果同时保留 `train.zip`、解压后的 train 数据库、本地模型、推理输出和 checkpoint，50GB 数据盘风险较高。
+- 下载前应先决定是否下载后立即校验并删除 zip，或使用更大数据盘/更小 filtered metadata 方案。
+
+当前不能把 BIRD dev 结果当作 train 记忆效用实验。BIRD dev 仍只用于 loader、SQLite evaluator 和 gold 隔离开发检查。

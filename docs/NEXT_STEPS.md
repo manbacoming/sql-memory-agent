@@ -394,3 +394,63 @@ PYTHONPATH=src /root/miniconda3/bin/python -m unittest discover -s tests -v
 2. Q340 的 `powerful` 曾误匹配字段 `power`，已改为字段词边界匹配，并加入测试 `test_column_matching_uses_boundaries_for_powerful_foil`。
 
 仍未完成：真实 SQL Agent、组合搜索、RL、记忆未来效用评测，以及可训练/可评估的语义分支标注集。
+
+## 2026-09-26 真实 train 链路预检与防泄漏骨架
+
+本轮目标是尝试跑通“较早 train 题写入经验记忆，较晚同库 train 题只检索一次旧记忆，再做空记忆/旧记忆配对比较”的真实链路。实际检查结果显示，当前服务器还不能诚实地执行完整真实链路，因此本轮只完成不依赖下载和 GPU 的代码骨架、资源预检和防泄漏测试。
+
+已完成的真实链路准备：
+
+- `src/sql_memory_agent/bird.py` 新增 `load_bird_train()`、`load_bird_split()` 和 `same_db_task_flow()`，可以在 train 数据落盘后读取 train metadata，并按 `db_id` 选择具有多道题的同库任务流。
+- `src/sql_memory_agent/real_chain.py` 新增真实链路基础对象：`SqlAgentRun`、`ExperienceCandidate`、`ExperienceVerification`，以及经验抽取、事实核验、记忆写入和配对条件检查函数。
+- 候选经验只从 Agent 可见输入、Agent 生成 SQL、只读执行状态和当前数据库 schema 中提取；不读取当前题 gold SQL、gold 执行结果或未来任务信息。
+- 长期记忆正文只保存结构化经验摘要、表/字段依赖和“未来效用未知”标记，不保存生成 SQL 原文。这样即使 Agent 生成 SQL 与 gold SQL 字符串相同，也不会把 gold 字符串写入后续 Agent 可见记忆。
+- `scripts/check_real_chain_readiness.py` 是只读预检入口；它检查 BIRD train 是否已 staged、本地模型文件是否存在、`nvidia-smi` 是否可用、以及是否能选出同库 train 任务流。资源缺失时只报告 `blocked_reasons`，不会退回 toy 或 BIRD dev 冒充真实 train 实验。
+- `tests/test_real_chain.py` 覆盖 train agent input 与 gold 隔离、同库任务流选择、经验事实核验、失败经验不写入、当前题不得预先看到自己记忆、以及空记忆/有记忆配对条件一致。
+
+本轮实际资源状态：
+
+```text
+/root/autodl-tmp free: 51,498,434,560 bytes，约 47.96 GiB
+BIRD train.zip: not staged
+BIRD train root: /root/autodl-tmp/sql-memory-agent-data/bird/extracted/train_20230711，不存在
+本地模型目录: /root/autodl-tmp/sql-memory-agent-models，未发现 config/tokenizer/weights
+nvidia-smi: /usr/bin/nvidia-smi 存在但不可执行，无法核实 GPU 型号、显存占用或运行小规模推理
+```
+
+官方 BIRD train 获取方式仍是：
+
+```text
+https://bird-bench.oss-cn-beijing.aliyuncs.com/train.zip
+```
+
+只读 HEAD 检查显示：
+
+```text
+Content-Length: 8,919,543,554 bytes
+Content-Type: application/zip
+Accept-Ranges: bytes
+Last-Modified: Tue, 11 Jul 2023 06:13:29 GMT
+```
+
+结合 BIRD 官方页面给出的全量数据库总规模 `33.4GB`，当前 50GB 数据盘虽然理论上可能容纳 train zip 和解压数据，但剩余空间还要留给模型、输出、缓存和 checkpoint。下一步下载前必须先决定是否：
+
+1. 下载完整 `train.zip` 后校验并只保留解压数据，删除 zip 以释放空间；
+2. 使用官方或可信镜像提供的更小 train metadata / filtered split；
+3. 迁移到更大数据盘后再下载完整 BIRD train。
+
+本轮没有完成的事项：
+
+- 没有下载 BIRD train，也没有解压 train 数据库。
+- 没有下载或加载 Text-to-SQL 模型。
+- 没有运行 GPU 推理；`nvidia-smi` 当前不可执行，无法记录真实显存占用。
+- 没有得到真实 train 题上的空记忆/旧记忆配对结果。
+- 没有证明记忆有效，也没有训练 RL 或组合搜索策略。
+
+下一步建议：
+
+1. 先修复或确认 GPU 运行环境，使 `nvidia-smi` 可读，并确认 GPU 型号和可用显存。
+2. 在不挤占系统盘的前提下，决定 train 数据获取方案；下载前保留模型和输出空间余量。
+3. staged train 后运行 `scripts/check_real_chain_readiness.py`，确认能选出同库任务流。
+4. staged 固定 SQL Agent 模型后，添加一个只跑 1 个早期题和 1 个较晚同库题的小规模真实入口。
+5. 真实入口通过后，再进入动态候选池、多组合配对和未来效用评测；这些仍未实现。

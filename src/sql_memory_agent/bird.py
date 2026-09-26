@@ -51,25 +51,46 @@ class BirdDevBundle:
         return [task.agent_input for task in self.tasks]
 
 
+@dataclass(frozen=True)
+class BirdDatasetBundle:
+    split: str
+    root: str
+    tasks: list[BirdTaskRecord]
+
+    def agent_inputs(self) -> list[BirdAgentTaskInput]:
+        return [task.agent_input for task in self.tasks]
+
+
 def default_bird_dev_root() -> Path:
     return Path("/root/autodl-tmp/sql-memory-agent-data/bird/extracted/dev_20240627")
 
 
-def sqlite_path_for_db(dev_root: Path, db_id: str) -> Path:
-    path = dev_root / "dev_databases" / db_id / f"{db_id}.sqlite"
+def default_bird_train_root() -> Path:
+    return Path("/root/autodl-tmp/sql-memory-agent-data/bird/extracted/train_20230711")
+
+
+def sqlite_path_for_db(root: Path, db_id: str, *, split: str = "dev") -> Path:
+    database_dir = f"{split}_databases"
+    path = root / database_dir / db_id / f"{db_id}.sqlite"
     if not path.is_file():
-        raise BirdLoadError(f"missing sqlite for db_id={db_id}: {path}")
+        raise BirdLoadError(f"missing sqlite for split={split} db_id={db_id}: {path}")
     return path
 
 
-def load_bird_dev(dev_root: str | Path | None = None, *, limit: int | None = None) -> BirdDevBundle:
-    root = Path(dev_root) if dev_root is not None else default_bird_dev_root()
-    dev_json = root / "dev.json"
-    if not dev_json.is_file():
-        raise BirdLoadError(f"missing dev.json: {dev_json}")
-    records = json.loads(dev_json.read_text(encoding="utf-8"))
+def load_bird_split(
+    root: str | Path,
+    *,
+    split: str,
+    limit: int | None = None,
+    require_sqlite: bool = True,
+) -> BirdDatasetBundle:
+    dataset_root = Path(root)
+    split_json = dataset_root / f"{split}.json"
+    if not split_json.is_file():
+        raise BirdLoadError(f"missing {split}.json: {split_json}")
+    records = json.loads(split_json.read_text(encoding="utf-8"))
     if not isinstance(records, list):
-        raise BirdLoadError("dev.json must contain a list")
+        raise BirdLoadError(f"{split}.json must contain a list")
     tasks: list[BirdTaskRecord] = []
     for raw in records[:limit]:
         try:
@@ -81,18 +102,48 @@ def load_bird_dev(dev_root: str | Path | None = None, *, limit: int | None = Non
             difficulty = raw.get("difficulty")
         except KeyError as exc:
             raise BirdLoadError(f"missing required field: {exc}") from exc
-        sqlite_path = sqlite_path_for_db(root, db_id)
+        if require_sqlite:
+            sqlite_path = sqlite_path_for_db(dataset_root, db_id, split=split)
+            sqlite_path_text = str(sqlite_path)
+        else:
+            sqlite_path_text = str(dataset_root / f"{split}_databases" / db_id / f"{db_id}.sqlite")
         agent = BirdAgentTaskInput(
             question_id=question_id,
             db_id=db_id,
             question=question,
             evidence=evidence,
             difficulty=str(difficulty) if difficulty is not None else None,
-            sqlite_path=str(sqlite_path),
+            sqlite_path=sqlite_path_text,
         )
         gold = BirdGoldRecord(question_id=question_id, db_id=db_id, gold_sql=gold_sql)
         tasks.append(BirdTaskRecord(agent_input=agent, gold=gold))
-    return BirdDevBundle(root=str(root), tasks=tasks)
+    return BirdDatasetBundle(split=split, root=str(dataset_root), tasks=tasks)
+
+
+def load_bird_dev(dev_root: str | Path | None = None, *, limit: int | None = None) -> BirdDevBundle:
+    root = Path(dev_root) if dev_root is not None else default_bird_dev_root()
+    bundle = load_bird_split(root, split="dev", limit=limit, require_sqlite=True)
+    return BirdDevBundle(root=bundle.root, tasks=bundle.tasks)
+
+
+def load_bird_train(
+    train_root: str | Path | None = None,
+    *,
+    limit: int | None = None,
+    require_sqlite: bool = True,
+) -> BirdDatasetBundle:
+    root = Path(train_root) if train_root is not None else default_bird_train_root()
+    return load_bird_split(root, split="train", limit=limit, require_sqlite=require_sqlite)
+
+
+def same_db_task_flow(tasks: list[BirdTaskRecord], *, min_tasks: int = 2) -> list[BirdTaskRecord]:
+    by_db: dict[str, list[BirdTaskRecord]] = {}
+    for task in tasks:
+        by_db.setdefault(task.agent_input.db_id, []).append(task)
+    candidates = [items for items in by_db.values() if len(items) >= min_tasks]
+    if not candidates:
+        return []
+    return max(candidates, key=lambda items: (len(items), -items[0].agent_input.question_id))
 
 
 def sqlite_schema_summary(sqlite_path: str | Path, *, max_tables: int = 80) -> str:
